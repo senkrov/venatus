@@ -1,0 +1,13 @@
+version: '3.9'
+
+services:
+  venatus:
+    build: .
+    image: venatus:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/usr/src/app/data
+
+

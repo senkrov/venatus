@@ -1,0 +1,6 @@
+play.senkrov.com {
+    # Caddy will automatically provision and renew SSL certificates for this domain.
+    reverse_proxy localhost:3000
+}
+
+

@@ -1,0 +1,155 @@
+:root {
+  --bg: #1a1a1a;
+  --accent: #00ffff;
+  --panel-bg: #111;
+  --panel-border: #00ffff;
+  --text: #e6faff;
+  /* UI sizing tuned to fit 2x item sprites comfortably */
+  --slot: 64px;        /* slot box size */
+  --gap: 8px;
+  --border: 2px;
+  --cell: calc(var(--slot) + var(--gap));
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Roboto Mono', monospace;
+  overflow: hidden;
+  cursor: url('/assets/sprites/cursor0.png') 16 16, crosshair; /* show custom sprite before lock */
+  user-select: none;
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  cursor: url('/assets/sprites/cursor0.png') 16 16, crosshair;
+}
+
+#cursorOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 3000;
+}
+
+#dragOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 3001; /* above cursor for clarity */
+}
+
+#messageBox {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  min-width: 220px;
+  z-index: 1003;
+}
+
+.panel {
+  position: relative;
+  background: rgba(17, 17, 17, 0.8);
+  border: 2px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 8px;
+  backdrop-filter: blur(2px);
+  z-index: 1001;
+}
+
+#hotbar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 24px;
+  display: grid;
+  grid-template-columns: repeat(4, var(--slot));
+  gap: var(--gap);
+  z-index: 1000;
+}
+
+#gearContainer {
+  position: fixed;
+  right: 24px;
+  bottom: calc(24px + var(--slot) + 16px); /* sit just above hotbar */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 1002;
+}
+
+#equipment { width: max-content; }
+#inventory { width: max-content; }
+
+#equipmentGrid {
+  position: relative;
+  width: calc(3 * var(--cell));
+  height: calc(3 * var(--cell));
+  min-width: calc(3 * var(--cell));
+}
+
+/* Absolute layout to mimic body placement (using your sketch) */
+.eq-shoulderLeft { position: absolute; left: calc(0 * var(--cell)); top: calc(0 * var(--cell)); }
+.eq-head { position: absolute; left: calc(1 * var(--cell)); top: calc(0 * var(--cell)); }
+.eq-shoulderRight { position: absolute; left: calc(2 * var(--cell)); top: calc(0 * var(--cell)); }
+.eq-chest { position: absolute; left: calc(1 * var(--cell)); top: calc(1 * var(--cell)); }
+.eq-backpack { position: absolute; left: calc(2 * var(--cell)); top: calc(1 * var(--cell)); }
+.eq-boots { position: absolute; left: calc(1 * var(--cell)); top: calc(2 * var(--cell)); }
+
+#inventory .grid {
+  display: grid;
+  grid-template-columns: repeat(4, var(--slot));
+  gap: var(--gap);
+}
+
+.slot {
+  width: var(--slot);
+  height: var(--slot);
+  border: var(--border) solid var(--accent);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.slot img {
+  max-width: 48px;  /* 2x of 24px base */
+  max-height: 48px;
+  image-rendering: pixelated;
+}
+
+/* While dragging from a slot, hide its contents so it looks lifted */
+.slot-drag-source > * {
+  visibility: hidden;
+}
+
+.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hidden { display: none; }
+
+

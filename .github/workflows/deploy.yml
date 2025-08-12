@@ -1,0 +1,72 @@
+name: CI/CD Deploy
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/venatus:latest
+            ghcr.io/${{ github.repository_owner }}/venatus:${{ github.sha }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }} # Set this secret to your VPS IP or hostname
+          username: ${{ secrets.VPS_USER }} # Set this secret to your VPS username
+          key: ${{ secrets.VPS_SSH_KEY }} # Set this secret to your private SSH key (contents)
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            # Navigate to your app directory on the VPS (adjust this path)
+            cd /path/to/my/game/app
+
+            # Ensure docker-compose is available (compose v2)
+            docker compose version || sudo ln -s $(which docker) /usr/local/bin/docker-compose || true
+
+            # Pull the new image version from GHCR
+            docker compose pull || docker-compose pull
+
+            # Restart the service with the new image
+            docker compose up -d --force-recreate || docker-compose up -d --force-recreate
+
+            # Clean up old, unused docker images
+            docker image prune -f
+
+        # Notes:
+        # - Ensure your docker-compose.yml on the VPS references the image:
+        #     image: ghcr.io/<your-gh-username-or-org>/venatus:latest
+        # - Create the following GitHub Secrets in your repo settings:
+        #     VPS_HOST, VPS_USER, VPS_SSH_KEY (private key), optionally VPS_PORT
+
+

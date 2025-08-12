@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Venatus</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div id="messageBox"></div>
+
+    <div id="hotbar" class="panel">
+      <div class="slot active"></div>
+      <div class="slot"></div>
+      <div class="slot"></div>
+      <div class="slot"></div>
+    </div>
+
+    <div id="gearContainer" class="gear-container hidden">
+      <div id="equipment" class="panel">
+        <div id="equipmentGrid" class="equipment-grid">
+          <div class="slot eq-shoulderLeft" data-eq="shoulderLeft" title="Shoulder (L)"></div>
+          <div class="slot eq-head" data-eq="head" title="Head"></div>
+          <div class="slot eq-shoulderRight" data-eq="shoulderRight" title="Shoulder (R)"></div>
+          <div class="slot eq-chest" data-eq="chest" title="Chest"></div>
+          <div class="slot eq-backpack" data-eq="backpack" title="Backpack"></div>
+          <div class="slot eq-boots" data-eq="boots" title="Boots"></div>
+        </div>
+      </div>
+      <div id="inventory" class="panel">
+        <div id="inventoryGrid" class="grid"></div>
+      </div>
+    </div>
+
+    <canvas id="cursorOverlay"></canvas>
+    <canvas id="dragOverlay"></canvas>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/client.js"></script>
+  </body>
+  </html>
+
+
