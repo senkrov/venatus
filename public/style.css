@@ -24,6 +24,11 @@ html, body {
   user-select: none;
 }
 
+/* Force custom cursor during HTML5 drag operations */
+html.dragging-cursor, html.dragging-cursor body, html.dragging-cursor * {
+  cursor: url('/assets/sprites/cursor0.png') 16 16, crosshair !important;
+}
+
 #game {
   display: block;
   width: 100vw;
@@ -68,6 +73,20 @@ html, body {
   z-index: 1003;
 }
 
+.coordinate-display {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #ffffff;
+  padding: 8px 12px;
+  border-radius: 5px;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 12px;
+  z-index: 1000;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
 .panel {
   position: relative;
   background: rgba(17, 17, 17, 0.8);
@@ -89,12 +108,40 @@ html, body {
   z-index: 1000;
 }
 
+#heatIndicator {
+  position: absolute; /* inside game canvas area; positioned by client */
+  left: 0;
+  top: 0;
+  width: 220px;
+  height: 8px;
+  border: 2px solid var(--accent);
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0,0,0,0.4);
+  z-index: 1000;
+}
+/* Heat fill bar */
+#heatIndicator .heatFill {
+  width: 0%;
+  height: 100%;
+  background: var(--accent);
+  transition: width 80ms linear;
+}
+
+#heatIndicator.overheated {
+  border-color: #ff4d4d;
+}
+
+#heatIndicator.overheated .heatFill {
+  background: #ff4d4d;
+}
+
 #gearContainer {
   position: fixed;
   right: 24px;
-  bottom: calc(24px + var(--slot) + 16px); /* sit just above hotbar */
+  bottom: 24px; /* align with hotbar margin */
   display: flex;
-  flex-direction: column;
+  flex-direction: column; /* equipment above, inventory below */
   gap: 12px;
   z-index: 1002;
 }
@@ -135,9 +182,11 @@ html, body {
 }
 
 .slot img {
-  max-width: 48px;  /* 2x of 24px base */
-  max-height: 48px;
+  width: 64px;
+  height: 64px;
   image-rendering: pixelated;
+  -webkit-user-drag: none;
+  user-drag: none;
 }
 
 /* While dragging from a slot, hide its contents so it looks lifted */
@@ -151,5 +200,9 @@ html, body {
 }
 
 .hidden { display: none; }
+
+#gearContainer.hidden { 
+  display: none !important; 
+}
 
 

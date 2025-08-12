@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tilemap Converter</title>
+    <style>
+        body {
+            font-family: 'Roboto Mono', monospace;
+            background: #1a1a1a;
+            color: #e6faff;
+            margin: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .upload-area {
+            border: 2px dashed #0066cc;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            border-radius: 8px;
+            background: rgba(0, 102, 204, 0.1);
+        }
+        .upload-area.dragover {
+            background: rgba(0, 102, 204, 0.3);
+            border-color: #00ffff;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .upload-btn {
+            background: #0066cc;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .upload-btn:hover {
+            background: #0052a3;
+        }
+        .preview {
+            margin: 20px 0;
+            text-align: center;
+        }
+        .preview img {
+            max-width: 100%;
+            border: 1px solid #404040;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 20px;
+            background: #2a2a2a;
+            border-radius: 8px;
+        }
+        .control-group {
+            margin: 10px 0;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+            margin-right: 10px;
+        }
+        input[type="text"], input[type="number"] {
+            background: #404040;
+            border: 1px solid #606060;
+            color: #e6faff;
+            padding: 8px;
+            border-radius: 4px;
+            width: 100px;
+        }
+        .generate-btn {
+            background: #00cc66;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        .generate-btn:hover {
+            background: #00a352;
+        }
+        .output {
+            margin: 20px 0;
+            padding: 20px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border: 1px solid #404040;
+        }
+        .legend-color.void { background: #000000; }
+        .legend-color.space { background: #0066cc; }
+        .legend-color.wall { background: #003366; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 PNG to Tilemap Converter</h1>
+        <p>Upload a PNG image where pixel colors represent tile types:</p>
+        
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color void"></div>
+                <span>Black = Void (impassable)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color space"></div>
+                <span>Blue = Space (walkable)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color wall"></div>
+                <span>Dark Blue = Wall (impassable)</span>
+            </div>
+        </div>
+
+        <div class="upload-area" id="uploadArea">
+            <p>📁 Drag & drop a PNG file here or click to browse</p>
+            <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                Choose PNG File
+            </button>
+            <input type="file" id="fileInput" accept=".png" onchange="handleFileSelect(event)">
+        </div>
+
+        <div class="preview" id="preview" style="display: none;">
+            <h3>Image Preview</h3>
+            <img id="previewImg" alt="Preview">
+        </div>
+
+        <div class="controls" id="controls" style="display: none;">
+            <h3>Map Settings</h3>
+            <div class="control-group">
+                <label>Realm Name:</label>
+                <input type="text" id="realmName" value="nexus" placeholder="nexus">
+            </div>
+            <div class="control-group">
+                <label>Origin X:</label>
+                <input type="number" id="originX" value="-4" placeholder="-4">
+            </div>
+            <div class="control-group">
+                <label>Origin Y:</label>
+                <input type="number" id="originY" value="-4" placeholder="-4">
+            </div>
+            <div class="control-group">
+                <label>Tile Size:</label>
+                <input type="number" id="tileSize" value="64" placeholder="64" readonly>
+            </div>
+            
+            <button class="generate-btn" onclick="generateTilemap()">Generate Tilemap</button>
+            <button class="generate-btn" onclick="exportCode()">Export as Code</button>
+        </div>
+
+        <div class="output" id="output" style="display: none;"></div>
+    </div>
+
+    <script>
+        let currentTilemap = null;
+        let currentImageData = null;
+
+        // Drag and drop functionality
+        const uploadArea = document.getElementById('uploadArea');
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        }
+
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                alert('Please select an image file');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    // Show preview
+                    document.getElementById('previewImg').src = e.target.result;
+                    document.getElementById('preview').style.display = 'block';
+                    document.getElementById('controls').style.display = 'block';
+                    
+                    // Store image data
+                    currentImageData = e.target.result;
+                    
+                    // Auto-fill realm name from filename
+                    const realmName = file.name.replace('.png', '').replace(/[^a-zA-Z0-9]/g, '_');
+                    document.getElementById('realmName').value = realmName;
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function generateTilemap() {
+            if (!currentImageData) {
+                alert('Please upload an image first');
+                return;
+            }
+
+            const realmName = document.getElementById('realmName').value;
+            const originX = parseInt(document.getElementById('originX').value);
+            const originY = parseInt(document.getElementById('originY').value);
+
+            if (!realmName) {
+                alert('Please enter a realm name');
+                return;
+            }
+
+            // Create canvas to process image
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            img.onload = function() {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                
+                const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                const pixels = imageData.data;
+                
+                // Convert pixels to tiles
+                const tiles = [];
+                for (let y = 0; y < img.height; y++) {
+                    const row = [];
+                    for (let x = 0; x < img.width; x++) {
+                        const pixelIndex = (y * img.width + x) * 4;
+                        const r = pixels[pixelIndex];
+                        const g = pixels[pixelIndex + 1];
+                        const b = pixels[pixelIndex + 2];
+                        
+                        // Find closest matching tile type
+                        const tileType = findClosestTileType(r, g, b);
+                        row.push(tileType);
+                    }
+                    tiles.push(row);
+                }
+                
+                // Create tilemap object
+                currentTilemap = {
+                    name: `${realmName} Map`,
+                    tiles: tiles,
+                    origin: { x: originX, y: originY },
+                    width: img.width,
+                    height: img.height,
+                    source: 'png'
+                };
+                
+                // Display results
+                displayResults(currentTilemap);
+            };
+            
+            img.src = currentImageData;
+        }
+
+        function findClosestTileType(r, g, b) {
+            const tileColors = {
+                void: [0, 0, 0],        // Black
+                space: [0, 102, 204],   // Blue
+                wall: [0, 51, 102]      // Dark blue
+            };
+            
+            let bestMatch = 'void';
+            let bestDistance = Infinity;
+            
+            for (const [tileType, [tr, tg, tb]] of Object.entries(tileColors)) {
+                const distance = Math.sqrt(
+                    Math.pow(r - tr, 2) + 
+                    Math.pow(g - tg, 2) + 
+                    Math.pow(b - tb, 2)
+                );
+                
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestMatch = tileType;
+                }
+            }
+            
+            return bestMatch;
+        }
+
+        function displayResults(tilemap) {
+            const output = document.getElementById('output');
+            output.style.display = 'block';
+            
+            let result = `✅ Tilemap Generated Successfully!\n\n`;
+            result += `📊 Map Statistics:\n`;
+            result += `   Name: ${tilemap.name}\n`;
+            result += `   Size: ${tilemap.width} x ${tilemap.height} tiles\n`;
+            result += `   Origin: (${tilemap.origin.x}, ${tilemap.origin.y})\n`;
+            result += `   World Size: ${tilemap.width * 64} x ${tilemap.height * 64} pixels\n\n`;
+            
+            result += `🗺️ Tile Layout:\n`;
+            for (let y = 0; y < tilemap.height; y++) {
+                result += `   ${tilemap.tiles[y].map(t => t.padEnd(6)).join('')}\n`;
+            }
+            
+            result += `\n💡 Next Steps:\n`;
+            result += `   1. Click "Export as Code" to get the JavaScript\n`;
+            result += `   2. Copy the code to your gameState.js file\n`;
+            result += `   3. Replace the existing nexus tilemap\n`;
+            
+            output.textContent = result;
+        }
+
+        function exportCode() {
+            if (!currentTilemap) {
+                alert('Please generate a tilemap first');
+                return;
+            }
+
+            const realmName = currentTilemap.name.replace(' Map', '').toLowerCase();
+            const realmUpper = realmName.toUpperCase();
+            
+            let code = `// Auto-generated tilemap for ${realmName}\n`;
+            code += `const ${realmUpper}_TILEMAP = {\n`;
+            code += `  name: '${currentTilemap.name}',\n`;
+            code += `  tiles: [\n`;
+            
+            for (let y = 0; y < currentTilemap.height; y++) {
+                code += `    ['${currentTilemap.tiles[y].join("', '")}'],\n`;
+            }
+            
+            code += `  ],\n`;
+            code += `  origin: { x: ${currentTilemap.origin.x}, y: ${currentTilemap.origin.y} },\n`;
+            code += `  width: ${currentTilemap.width},\n`;
+            code += `  height: ${currentTilemap.height}\n`;
+            code += `};\n\n`;
+            
+            code += `// Usage: REALM_TILE_MAPS.${realmName} = ${realmUpper}_TILEMAP;\n`;
+            code += `// Add this to your gameState.js file\n`;
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(code).then(() => {
+                alert('Code copied to clipboard! Paste it into your gameState.js file.');
+            }).catch(() => {
+                // Fallback: show in output
+                document.getElementById('output').textContent = code;
+            });
+        }
+    </script>
+</body>
+</html>
+

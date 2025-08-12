@@ -1,0 +1,34 @@
+TEST PNG LAYOUT FOR NEXUS REALM
+================================
+
+Create a PNG file named 'nexus.png' with this layout:
+
+4x4 pixel image where:
+- White pixels (#ffffff) = Space tiles (walkable)
+- Black pixels (#000000) = Wall tiles (impassable)  
+- Red pixels (#ff0000) = Coordinate markers - define where (0,0) is centered on the map
+
+Example layout:
+┌─────┬─────┬─────┬─────┐
+│Black│White│White│Black│  ← Row 0
+├─────┼─────┼─────┼─────┤
+│White│Red  │Red  │White│  ← Row 1 (Red tiles around 0,0)
+├─────┼─────┼─────┼─────┤
+│White│Red  │Red  │White│  ← Row 2 (Red tiles around 0,0)
+├─────┼─────┼─────┼─────┤
+│Black│White│White│Black│  ← Row 3
+└─────┴─────┴─────┴─────┘
+
+This creates:
+- Walkable white tiles (general space)
+- Red tiles marking where (0,0) coordinate is centered (become walkable space tiles)
+- Impassable black wall tiles around the edges
+
+The server will automatically:
+1. Detect the PNG file
+2. Convert colors to tile types
+3. Convert red pixels to space tiles
+4. Load the tilemap into the game
+5. Watch for changes and auto-reload
+
+Save this as 'nexus.png' in the tilemaps/ folder!

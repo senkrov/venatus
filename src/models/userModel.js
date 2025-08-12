@@ -15,9 +15,9 @@ function createDefaultUser(username) {
 
   return {
     username,
-    x_position: 0,
-    y_position: 0,
-    current_world: 'nexus',
+    x_position: 0, // Center of nexus realm
+    y_position: 0, // Center of nexus realm
+    current_realm: 'nexus',
     gear_data: JSON.stringify(defaultGear),
   };
 }

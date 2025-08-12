@@ -1,6 +1,13 @@
 (function () {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
+  // Ensure canvas can receive focus so Tab handling works
+  if (!canvas.hasAttribute('tabindex')) {
+    canvas.setAttribute('tabindex', '0');
+  }
+  canvas.addEventListener('click', () => {
+    try { canvas.focus(); } catch (_) {}
+  });
   const cursorOverlay = document.getElementById('cursorOverlay');
   const cursorCtx = cursorOverlay.getContext('2d');
   const dragOverlay = document.getElementById('dragOverlay');
@@ -8,14 +15,20 @@
   const dragState = { active: false, img: null, size: 48, x: 0, y: 0, cleanup: null };
 
   const messageBox = document.getElementById('messageBox');
+  const coordinateDisplay = document.getElementById('coordinateDisplay');
   const gearContainer = document.getElementById('gearContainer');
   const inventoryPanel = document.getElementById('inventory');
   const inventoryGrid = document.getElementById('inventoryGrid');
   const equipmentGrid = document.getElementById('equipmentGrid');
   const hotbarPanel = document.getElementById('hotbar');
+  const energyIndicator = document.getElementById('heatIndicator'); // Keep same HTML element
+  const energyFill = document.createElement('div');
+  energyFill.className = 'heatFill'; // Keep same CSS class
+  energyIndicator.appendChild(energyFill);
 
-  let world = 'nexus';
-  let worldSize = { width: 2000, height: 2000 };
+  let realm = 'nexus';
+  let realmSize = { width: 2000, height: 2000 };
+  let realmConfig = null;
   let username = null;
   let physics = { ACCELERATION: 0.1, FRICTION: 0.95, MAX_SPEED: 5 };
 
@@ -25,12 +38,20 @@
   let localPlayer = { x: 0, y: 0 };
   let portals = [];
   let players = [];
+  let mobs = []; // Add mobs array
+  let spawners = []; // Add spawners array
   let gear = { inventory: [], hotbar: [null, null, null, null], equipment: {} };
   let activeHotbarIndex = 0;
+  
+  // Hit effects and damage numbers
+  let hitEffects = [];
+  let damageNumbers = [];
 
   const ITEM_ICONS = {
     item_pistol_a: '/assets/sprites/items/pistol.png',
+    item_rifle_a: '/assets/sprites/items/rifle.png',
   };
+  const SLOT_ICON_SIZE = 64; // keep drag ghost and slot icons consistent
   const ICON_CACHE = new Map();
   // Preload icons
   for (const id in ITEM_ICONS) {
@@ -80,9 +101,9 @@
       virtualMouse.x = e.clientX - rect.left;
       virtualMouse.y = e.clientY - rect.top;
 
-      const worldX = camera.x + virtualMouse.x - canvas.width / 2;
-      const worldY = camera.y + virtualMouse.y - canvas.height / 2;
-      input.angle = Math.atan2(worldY - localPlayer.y, worldX - localPlayer.x);
+        const realmX = camera.x + virtualMouse.x - canvas.width / 2;
+  const realmY = camera.y + virtualMouse.y - canvas.height / 2;
+  input.angle = Math.atan2(realmY - localPlayer.y, realmX - localPlayer.x);
       throttledSendInput();
     });
     // Ensure overlay is hidden since we are not using pointer lock
@@ -93,26 +114,42 @@
   function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Background grid
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = 'rgba(0,255,255,0.15)';
+    // Background tiles - only render tiles that actually exist in the map
+    const tileSize = 64; // Match TILE_SIZE from server
+    
+    // Render simple void world with grid lines
+    const gridSize = 64; // 64x64 pixel grid
+    const worldRadius = 1200; // 1200 pixel radius around center
+    
+    // Calculate visible world bounds
+    const visibleStartX = Math.max(-worldRadius, camera.x - canvas.width / 2);
+    const visibleEndX = Math.min(worldRadius, camera.x + canvas.width / 2);
+    const visibleStartY = Math.max(-worldRadius, camera.y - canvas.height / 2);
+    const visibleEndY = Math.min(worldRadius, camera.y + canvas.height / 2);
+    
+    // Render grid lines
+    ctx.strokeStyle = '#333333'; // Dark gray grid lines
     ctx.lineWidth = 1;
-    const gridSize = 40;
-    const startX = -((camera.x - canvas.width / 2) % gridSize);
-    const startY = -((camera.y - canvas.height / 2) % gridSize);
-    for (let x = startX; x < canvas.width; x += gridSize) {
+    
+    // Vertical grid lines
+    for (let x = Math.floor(visibleStartX / gridSize) * gridSize; x <= visibleEndX; x += gridSize) {
+      const screenX = (x - camera.x) + canvas.width / 2;
       ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
+      ctx.moveTo(screenX, 0);
+      ctx.lineTo(screenX, canvas.height);
       ctx.stroke();
     }
-    for (let y = startY; y < canvas.height; y += gridSize) {
+    
+    // Horizontal grid lines
+    for (let y = Math.floor(visibleStartY / gridSize) * gridSize; y <= visibleEndY; y += gridSize) {
+      const screenY = (y - camera.y) + canvas.height / 2;
       ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(canvas.width, y);
+      ctx.moveTo(0, screenY);
+      ctx.lineTo(canvas.width, screenY);
       ctx.stroke();
     }
+
+    // No hardcoded spawners - realm is clean slate
 
     // Portals
     ctx.fillStyle = 'rgba(0,255,255,0.25)';
@@ -141,6 +178,62 @@
       ctx.font = '12px Roboto Mono';
       ctx.textAlign = 'center';
       ctx.fillText(p.username, sx, sy - 14);
+
+      // Position energy bar above hotbar (not following player)
+      if (isLocal) {
+        // Position above the hotbar area
+        const hotbarTop = window.innerHeight - 120; // Hotbar is at bottom, move up 120px
+        energyIndicator.style.left = '50%';
+        energyIndicator.style.top = `${hotbarTop - 40}px`; // 40px above hotbar
+        energyIndicator.style.transform = 'translateX(-50%)'; // Center horizontally
+      }
+    }
+
+    // Projectiles
+    const projs = window.__projectiles || [];
+    ctx.fillStyle = '#00ffff';
+    for (const pr of projs) {
+      const sx = (pr.x - camera.x) + canvas.width / 2;
+      const sy = (pr.y - camera.y) + canvas.height / 2;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+
+    
+    // Hit effects and damage numbers
+    renderHitEffects(ctx);
+
+    // Debug info - show mob count and positions
+    if (mobs.length > 0) {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '14px Roboto Mono';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Mobs: ${mobs.length}`, 10, 30);
+      
+      // Show first few mob positions
+      for (let i = 0; i < Math.min(3, mobs.length); i++) {
+        const mob = mobs[i];
+        const sx = (mob.x - camera.x) + canvas.width / 2;
+        const sy = (mob.y - camera.y) + canvas.height / 2;
+        
+        // Draw a small indicator if mob is off-screen
+        if (sx < -50 || sx > canvas.width + 50 || sy < -50 || sy > canvas.height + 50) {
+          const edgeX = Math.max(50, Math.min(canvas.width - 50, sx));
+          const edgeY = Math.max(50, Math.min(canvas.height - 50, sy));
+          
+          ctx.fillStyle = '#ff6b6b';
+          ctx.beginPath();
+          ctx.arc(edgeX, edgeY, 8, 0, Math.PI * 2);
+          ctx.fill();
+          
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '10px Roboto Mono';
+          ctx.textAlign = 'center';
+          ctx.fillText(`${mob.type}`, edgeX, edgeY + 20);
+        }
+      }
     }
 
     // Cursor rendered above everything only when pointer locked
@@ -162,31 +255,61 @@
       }
     }
   }
+  // Simple muzzle flash effect for local player
+  let lastFiredAt = 0;
+  let lastFrameTime = performance.now();
 
   function updateCamera() {
     camera.x = localPlayer.x;
     camera.y = localPlayer.y;
   }
+  
+  function updateCoordinateDisplay() {
+    if (coordinateDisplay) {
+      coordinateDisplay.textContent = `X: ${localPlayer.x.toFixed(1)} Y: ${localPlayer.y.toFixed(1)}`;
+    }
+  }
 
   function gameLoop() {
     updateCamera();
+    updateCoordinateDisplay();
+    
+    // Update hit effects with delta time
+    const now = performance.now();
+    const dt = (now - lastFrameTime) / 1000;
+    lastFrameTime = now;
+    updateHitEffects(dt);
+    
     draw();
     requestAnimationFrame(gameLoop);
   }
 
   // Input handling
+  function toggleGear() {
+    gearContainer.classList.toggle('hidden');
+    if (!gearContainer.classList.contains('hidden')) {
+      renderGearUI();
+    }
+  }
+
+  // Ensure Tab toggles gear (now that CSS specificity is fixed)
+  function isTabEvent(e) {
+    return e.code === 'Tab' || e.key === 'Tab' || e.keyCode === 9;
+  }
+  // Only use window listener to avoid duplicate handling
+  window.addEventListener('keydown', (e) => {
+    if (isTabEvent(e)) {
+      e.preventDefault();
+      toggleGear();
+    }
+  }, true);
+
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyW') input.up = true;
     if (e.code === 'KeyS') input.down = true;
     if (e.code === 'KeyA') input.left = true;
     if (e.code === 'KeyD') input.right = true;
-    if (e.code === 'Tab') {
-      e.preventDefault();
-      gearContainer.classList.toggle('hidden');
-      if (!gearContainer.classList.contains('hidden')) {
-        renderGearUI();
-      }
-    }
+    // Tab handled above. Remove KeyI shortcut per request.
     if (e.code === 'KeyF') {
       socket.emit('requestTravel');
     }
@@ -198,14 +321,14 @@
       activeHotbarIndex = (activeHotbarIndex + 1) % 4;
       updateHotbarActive();
     }
-    throttledSendInput();
+    sendInputImmediate();
   });
   window.addEventListener('keyup', (e) => {
     if (e.code === 'KeyW') input.up = false;
     if (e.code === 'KeyS') input.down = false;
     if (e.code === 'KeyA') input.left = false;
     if (e.code === 'KeyD') input.right = false;
-    throttledSendInput();
+    sendInputImmediate();
   });
   window.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -213,6 +336,7 @@
     if (dir > 0) activeHotbarIndex = (activeHotbarIndex + 1) % 4;
     if (dir < 0) activeHotbarIndex = (activeHotbarIndex + 3) % 4;
     updateHotbarActive();
+    socket.emit('activeHotbar', { index: activeHotbarIndex });
   }, { passive: false });
 
   let lastSentAt = 0;
@@ -223,8 +347,15 @@
     socket.emit('input', input);
   }
 
+  function sendInputImmediate() {
+    socket.emit('input', input);
+  }
+
   username = promptUsername();
   const socket = io({ auth: { username } });
+  socket.on('fired', () => { lastFiredAt = performance.now(); });
+  
+
 
   socket.on('connect_error', (err) => {
     showMessage('Connection error: ' + (err?.message || 'unknown'));
@@ -233,41 +364,66 @@
   socket.on('errorMessage', (msg) => showMessage(msg));
 
   socket.on('init', (data) => {
-    world = data.world;
-    worldSize = data.worldSize;
+    realm = data.realm;
+    realmSize = data.realmSize;
+    realmConfig = data.realmConfig;
     physics = data.physics;
     localPlayer.x = data.x;
     localPlayer.y = data.y;
     gear = data.gear || gear;
+    console.log('INIT gear', gear);
     renderGearUI();
     updateHotbarActive();
-    showMessage(`Connected as ${username} in ${world}`);
+    showMessage(`Connected as ${username} in ${realm}`);
   });
 
-  socket.on('worldChanged', (data) => {
-    world = data.world;
+  socket.on('realmChanged', (data) => {
+    realm = data.realm;
     localPlayer.x = data.x;
     localPlayer.y = data.y;
-    showMessage(`Travelled to ${world}`);
+    showMessage(`Travelled to ${realm}`);
   });
 
   socket.on('state', (snapshot) => {
     players = snapshot.players || [];
     portals = snapshot.portals || [];
+    mobs = snapshot.mobs || []; // Update mobs array
+    spawners = snapshot.spawners || []; // Update spawners array
+    
+    // Debug: check mob types being received
+    if (mobs.length > 0) {
+      console.log('Mob types received:', mobs.map(m => ({ id: m.id, type: m.type, shape: m.shape, angle: m.angle, currentFace: m.currentFace })));
+    }
+    
+    console.log('Received state update:', { 
+      players: players.length, 
+      portals: portals.length, 
+      mobs: mobs.length,
+      spawners: spawners.length,
+      mobsData: mobs 
+    });
     const me = players.find((p) => p.username === username);
     if (me) {
       localPlayer.x = me.x;
       localPlayer.y = me.y;
     }
 
+    // Projectiles snapshot
+    window.__projectiles = Array.isArray(snapshot.projectiles) ? snapshot.projectiles : [];
+
     // Portal proximity prompt
     let nearPortal = false;
+    let currentPortal = null;
     for (const p of portals) {
       const d = Math.hypot(p.x - localPlayer.x, p.y - localPlayer.y);
-      if (d <= 40) { nearPortal = true; break; }
+      if (d <= 40) { 
+        nearPortal = true; 
+        currentPortal = p;
+        break; 
+      }
     }
-    if (nearPortal) {
-      showMessage('Press [F] to travel');
+    if (nearPortal && currentPortal) {
+      showMessage(`Press [F] to travel to ${currentPortal.toRealm} realm`);
     }
   });
 
@@ -314,13 +470,22 @@
 
     // hotbar items
     renderHotbarUI();
+
+    // Disable native dragstart on all slots/images to avoid browser ghosts
+    document.querySelectorAll('#inventory .slot, #hotbar .slot, #equipmentGrid .slot, #inventory .slot img, #hotbar .slot img, #equipmentGrid .slot img')
+      .forEach((n) => n.addEventListener('dragstart', (ev) => ev.preventDefault()));
   }
 
   function renderHotbarUI() {
     const hotbarSlots = hotbarPanel.querySelectorAll('.slot');
     hotbarSlots.forEach((el, i) => {
       el.innerHTML = '';
+      el.dataset.kind = 'hotbar';
+      el.dataset.index = String(i);
       addDragHandlers(el, { kind: 'hotbar', index: i });
+      // Ensure no hover/click selection
+      el.onmouseenter = null;
+      el.onclick = null;
       renderSlotContent(el, gear.hotbar?.[i] || null);
     });
   }
@@ -331,11 +496,11 @@
     const iconPath = ITEM_ICONS[item.id];
     if (iconPath) {
       const img = document.createElement('img');
-      img.src = iconPath;
+      img.src = iconPath + `?v=${Date.now()}`; // bust cache during dev
       img.alt = item.id;
       img.draggable = false;
-      img.style.width = '48px';
-      img.style.height = '48px';
+      img.style.width = `${SLOT_ICON_SIZE}px`;
+      img.style.height = `${SLOT_ICON_SIZE}px`;
       img.style.pointerEvents = 'none';
       el.appendChild(img);
     } else {
@@ -349,36 +514,22 @@
     }
   }
 
-  // ----- Drag and drop -----
+  // ----- Pointer-based drag and drop -----
   function addDragHandlers(el, originRef) {
-    if (el.dataset.dragHandlersAttached === '1') return;
-    el.dataset.dragHandlersAttached = '1';
-    el.draggable = true;
-    el.addEventListener('mousedown', () => { el.draggable = true; });
-    el.addEventListener('dragstart', (e) => {
-      try {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('application/json', JSON.stringify(originRef));
-        e.dataTransfer.setData('text/plain', 'move');
-      } catch (_) {}
-      // Custom drag image: the item sprite at 2x, not the box
+    if (el.dataset.pointerHandlersAttached === '1') return;
+    el.dataset.pointerHandlersAttached = '1';
+    el.addEventListener('pointerdown', (e) => {
+      // Do not start drag when clicking inside empty slot
       const ref = originRef;
       let item = null;
       if (ref.kind === 'inventory') item = gear.inventory[ref.index];
       if (ref.kind === 'equipment') item = gear.equipment[ref.slot];
       if (ref.kind === 'hotbar') item = gear.hotbar[ref.index];
-      if (!item) { e.preventDefault(); return; }
-      const iconPath = item ? ITEM_ICONS[item.id] : null;
+      if (!item) return;
+      const iconPath = ITEM_ICONS[item.id];
       if (!iconPath) return;
+      e.preventDefault();
 
-      // Hide default browser ghost by using a transparent 1x1 image
-      try {
-        const transparent = document.createElement('canvas');
-        transparent.width = 1; transparent.height = 1;
-        e.dataTransfer.setDragImage(transparent, 0, 0);
-      } catch (_) {}
-
-      // Pick the exact same img element if present for visual parity
       const slotImg = el.querySelector('img');
       let imgEl = slotImg || ICON_CACHE.get(item.id);
       if (!imgEl || !imgEl.complete) {
@@ -388,67 +539,354 @@
       }
 
       el.classList.add('slot-drag-source');
+      document.documentElement.classList.add('dragging-cursor');
       dragOverlay.style.display = 'block';
-      dragState.active = true;
-      dragState.img = imgEl;
-      dragState.size = 48; // same as slot icon size
 
-      const onDragMove = (ev) => {
-        ev.preventDefault();
-        dragState.x = ev.clientX;
-        dragState.y = ev.clientY;
-      };
-      const onDrag = onDragMove;
-      document.addEventListener('dragover', onDragMove);
-      document.addEventListener('drag', onDrag, { capture: true });
-
-      const render = () => {
-        if (!dragState.active) return;
+      const move = (ev) => {
         dragCtx.clearRect(0, 0, dragOverlay.width, dragOverlay.height);
-        if (dragState.img) {
-          dragCtx.imageSmoothingEnabled = false;
-          const s = dragState.size;
-          dragCtx.drawImage(dragState.img, dragState.x - s / 2, dragState.y - s / 2, s, s);
-        }
-        requestAnimationFrame(render);
+        dragCtx.imageSmoothingEnabled = false;
+        const half = SLOT_ICON_SIZE / 2;
+        dragCtx.drawImage(imgEl, ev.clientX - half, ev.clientY - half, SLOT_ICON_SIZE, SLOT_ICON_SIZE);
       };
-      requestAnimationFrame(render);
-
-      const cleanup = () => {
-        dragState.active = false;
-        document.removeEventListener('dragover', onDragMove);
-        document.removeEventListener('drag', onDrag, { capture: true });
+      const cleanupAll = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up, true);
+        window.removeEventListener('blur', cancelDrag, true);
+        document.documentElement.classList.remove('dragging-cursor');
         dragCtx.clearRect(0, 0, dragOverlay.width, dragOverlay.height);
         dragOverlay.style.display = 'none';
         el.classList.remove('slot-drag-source');
       };
-      const endOnce = () => { cleanup(); el.removeEventListener('dragend', endOnce); };
-      el.addEventListener('dragend', endOnce);
+      const cancelDrag = () => {
+        cleanupAll();
+      };
+      const up = (ev) => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up, true);
+        window.removeEventListener('blur', cancelDrag, true);
+        document.documentElement.classList.remove('dragging-cursor');
+        dragCtx.clearRect(0, 0, dragOverlay.width, dragOverlay.height);
+        dragOverlay.style.display = 'none';
+        el.classList.remove('slot-drag-source');
+
+        // Determine drop target
+        const dropTarget = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.slot');
+        if (!dropTarget) return;
+        const kind = dropTarget.dataset.kind || (dropTarget.closest('#inventory') ? 'inventory' : dropTarget.closest('#hotbar') ? 'hotbar' : dropTarget.dataset.eq ? 'equipment' : undefined);
+        let to = null;
+        if (kind === 'inventory') to = { kind: 'inventory', index: Number(dropTarget.dataset.index) };
+        else if (kind === 'hotbar') to = { kind: 'hotbar', index: Number(dropTarget.dataset.index) };
+        else if (dropTarget.dataset.eq) to = { kind: 'equipment', slot: dropTarget.dataset.eq };
+        if (!to) return;
+
+        socket.emit('gearMove', { from: originRef, to }, (resp) => {
+          if (!resp?.ok) {
+            showMessage(`Move failed: ${resp?.error || 'unknown'}`);
+            return;
+          }
+          gear = resp.gear;
+          renderGearUI();
+        });
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up, true);
+      window.addEventListener('blur', cancelDrag, true);
     });
-    el.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
+  }
+
+  // Fire on left click if active hotbar item is a weapon
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const active = gear.hotbar?.[activeHotbarIndex];
+    if (!active) return;
+    // Allow firing regardless of cursor over UI because canvas is underneath UI
+    socket.emit('fire');
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (e.button !== 0) return;
+    socket.emit('fireStop');
+  });
+
+  // Energy indicator management (0..1)
+  socket.on('heat', (payload) => {
+    const v = Math.max(0, Math.min(1, Number(payload?.value) || 0));
+    const oh = Boolean(payload?.overheated);
+    energyFill.style.width = `${v * 100}%`;
+    energyIndicator.classList.toggle('overheated', oh);
+  });
+
+  // Mob rendering functions
+  function renderMob(ctx, mob) {
+    console.log('Rendering mob:', mob);
+    const screenX = mob.x - camera.x + canvas.width / 2;
+    const screenY = mob.y - camera.y + canvas.height / 2;
+    
+    // Skip if off-screen
+    if (screenX < -100 || screenX > canvas.width + 100 || 
+        screenY < -100 || screenY > canvas.height + 100) {
+      console.log('Mob off-screen, skipping:', { screenX, screenY, mobX: mob.x, mobY: mob.y });
+      return;
+    }
+    
+    ctx.save();
+    ctx.translate(screenX, screenY);
+    ctx.rotate(mob.angle);
+    
+    // Render based on shape
+    if (mob.shape === 'triangle') {
+      renderTriangleMob(ctx, mob);
+    } else if (mob.shape === 'square') {
+      renderSquareMob(ctx, mob);
+    } else if (mob.shape === 'hexagon') {
+      renderHexagonMob(ctx, mob);
+    } else {
+      console.log('Unknown mob shape:', mob.shape);
+    }
+    
+    // Render health bar
+    renderMobHealthBar(ctx, mob);
+    
+    // Render AI state indicator
+    renderAIStateIndicator(ctx, mob);
+    
+    ctx.restore();
+  }
+  
+  function renderTriangleMob(ctx, mob) {
+    const size = mob.size;
+    const halfSize = size / 2;
+    
+    // Draw triangle
+    ctx.fillStyle = mob.color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    
+    ctx.beginPath();
+    ctx.moveTo(0, -halfSize); // Top point
+    ctx.lineTo(-halfSize, halfSize); // Bottom left
+    ctx.lineTo(halfSize, halfSize); // Bottom right
+    ctx.closePath();
+    
+    ctx.fill();
+    ctx.stroke();
+    
+    // No face indicators - clean mob appearance
+  }
+  
+  function renderSquareMob(ctx, mob) {
+    const size = mob.size;
+    const halfSize = size / 2;
+    
+    // Draw square
+    ctx.fillStyle = mob.color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    
+    ctx.fillRect(-halfSize, -halfSize, size, size);
+    ctx.strokeRect(-halfSize, -halfSize, size, size);
+    
+    // No face indicators - clean mob appearance
+  }
+  
+  function renderHexagonMob(ctx, mob) {
+    const size = mob.size;
+    const halfSize = size / 2;
+    
+    // Draw hexagon
+    ctx.fillStyle = mob.color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * 2 * Math.PI;
+      const x = Math.cos(angle) * halfSize;
+      const y = Math.sin(angle) * halfSize;
+      
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.closePath();
+    
+    ctx.fill();
+    ctx.stroke();
+    
+    // No face indicators - clean mob appearance
+  }
+  
+  function renderMobHealthBar(ctx, mob) {
+    const barWidth = mob.size;
+    const barHeight = 6;
+    const barY = -mob.size / 2 - 15;
+    
+    // Background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(-barWidth / 2, barY, barWidth, barHeight);
+    
+    // Health bar
+    const healthPercent = mob.health / mob.maxHealth;
+    ctx.fillStyle = healthPercent > 0.5 ? '#4CAF50' : healthPercent > 0.25 ? '#FF9800' : '#F44336';
+    ctx.fillRect(-barWidth / 2, barY, barWidth * healthPercent, barHeight);
+    
+    // Border
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-barWidth / 2, barY, barWidth, barHeight);
+  }
+  
+  function renderAIStateIndicator(ctx, mob) {
+    const indicatorY = -mob.size / 2 - 35;
+    
+    // AI State text
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '10px Roboto Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(mob.aiState || 'unknown', 0, indicatorY);
+    
+    // Behavior type
+    ctx.fillStyle = '#cccccc';
+    ctx.font = '8px Roboto Mono';
+    ctx.fillText(`${mob.behavior} ${mob.combatStyle}`, 0, indicatorY + 12);
+  }
+  
+  // Hit effect system
+  function createHitEffect(x, y, damage) {
+    hitEffects.push({
+      x: x,
+      y: y,
+      damage: damage,
+      life: 1.0, // 1 second
+      scale: 1.0,
+      alpha: 1.0
     });
-    el.addEventListener('drop', (e) => {
-      e.preventDefault();
-      let from = null;
-      try { from = JSON.parse(e.dataTransfer.getData('application/json')); } catch (_) {}
-      const to = originRef;
-      if (!from || !to) return;
-      socket.emit('gearMove', { from, to }, (resp) => {
-        if (!resp?.ok) {
-          showMessage(`Move failed: ${resp?.error || 'unknown'}`);
-          return;
-        }
-        gear = resp.gear;
-        renderGearUI();
-      });
+    
+    // Add damage number
+    damageNumbers.push({
+      x: x + (Math.random() - 0.5) * 40, // Randomize position slightly
+      y: y - 30,
+      damage: damage,
+      life: 2.0, // 2 seconds
+      velocity: { x: (Math.random() - 0.5) * 50, y: -100 }, // Float upward
+      alpha: 1.0
     });
-    // Ensure drops work when releasing outside valid targets (cancel)
-    el.addEventListener('dragend', () => {
-      dragCtx.clearRect(0, 0, dragOverlay.width, dragOverlay.height);
-      el.classList.remove('slot-drag-source');
-    });
+  }
+  
+  function updateHitEffects(dt) {
+    // Update hit effects
+    for (let i = hitEffects.length - 1; i >= 0; i--) {
+      const effect = hitEffects[i];
+      effect.life -= dt;
+      effect.scale = 1.0 + (1.0 - effect.life) * 0.5; // Grow slightly
+      effect.alpha = effect.life;
+      
+      if (effect.life <= 0) {
+        hitEffects.splice(i, 1);
+      }
+    }
+    
+    // Update damage numbers
+    for (let i = damageNumbers.length - 1; i >= 0; i--) {
+      const number = damageNumbers[i];
+      number.life -= dt;
+      number.x += number.velocity.x * dt;
+      number.y += number.velocity.y * dt;
+      number.velocity.y += 200 * dt; // Gravity
+      number.alpha = Math.min(1.0, number.life * 2); // Fade out
+      
+      if (number.life <= 0) {
+        damageNumbers.splice(i, 1);
+      }
+    }
+  }
+  
+  function renderHitEffects(ctx) {
+    // Render hit effects
+    for (const effect of hitEffects) {
+      const screenX = effect.x - camera.x + canvas.width / 2;
+      const screenY = effect.y - camera.y + canvas.height / 2;
+      
+      ctx.save();
+      ctx.globalAlpha = effect.alpha;
+      ctx.translate(screenX, screenY);
+      ctx.scale(effect.scale, effect.scale);
+      
+      // Draw hit effect (expanding circle)
+      ctx.strokeStyle = '#ff0000';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, 20, 0, 2 * Math.PI);
+      ctx.stroke();
+      
+      ctx.restore();
+    }
+    
+    // Render damage numbers
+    for (const number of damageNumbers) {
+      const screenX = number.x - camera.x + canvas.width / 2;
+      const screenY = number.y - camera.y + canvas.height / 2;
+      
+      ctx.save();
+      ctx.globalAlpha = number.alpha;
+      ctx.fillStyle = '#ff0000';
+      ctx.font = 'bold 16px Roboto Mono';
+      ctx.textAlign = 'center';
+      ctx.fillText(number.damage.toString(), screenX, screenY);
+      ctx.restore();
+    }
+  }
+  
+  // Spawner rendering
+  function renderSpawner(ctx, spawner) {
+    const screenX = spawner.x - camera.x + canvas.width / 2;
+    const screenY = spawner.y - camera.y + canvas.height / 2;
+    
+    // Only render if on screen
+    if (screenX < -100 || screenX > canvas.width + 100 || 
+        screenY < -100 || screenY > canvas.height + 100) {
+      return;
+    }
+    
+    // Draw spawner base (large circle)
+    ctx.save();
+    ctx.strokeStyle = spawner.config.color;
+    ctx.lineWidth = 3;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    
+    // Main spawner circle
+    ctx.beginPath();
+    ctx.arc(screenX, screenY, 40, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+    
+    // Inner circle
+    ctx.strokeStyle = spawner.config.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(screenX, screenY, 25, 0, 2 * Math.PI);
+    ctx.stroke();
+    
+    // Spawner type indicator
+    ctx.fillStyle = spawner.config.color;
+    ctx.font = 'bold 12px Roboto Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(spawner.config.name.split(' ')[2], screenX, screenY + 5); // "Level X"
+    
+    // Drone count
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '10px Roboto Mono';
+    ctx.fillText(`${spawner.droneCount} drones`, screenX, screenY + 25);
+    
+    // Spawn radius indicator (faint)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(screenX, screenY, spawner.config.spawnRadius, 0, 2 * Math.PI);
+    ctx.stroke();
+    
+    ctx.restore();
   }
 })();
 
