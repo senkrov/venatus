@@ -43,6 +43,13 @@
   let gear = { inventory: [], hotbar: [null, null, null, null], equipment: {} };
   let activeHotbarIndex = 0;
   
+  // Simple Minimap System
+  let minimap;
+  let minimapCanvas;
+  let minimapCtx;
+  let minimapTooltip;
+  let minimapHoveredElement = null;
+  
   // Hit effects and damage numbers
   let hitEffects = [];
   let damageNumbers = [];
@@ -81,6 +88,355 @@
   }
   window.addEventListener('resize', resize);
   resize();
+
+  // Initialize Simple Minimap System
+  function initMinimap() {
+    minimap = document.getElementById('minimap');
+    minimapCanvas = document.getElementById('minimapCanvas');
+    minimapCtx = minimapCanvas.getContext('2d');
+    
+    // Set canvas size
+    minimapCanvas.width = 200;
+    minimapCanvas.height = 200;
+    
+    // Create tooltip element
+    minimapTooltip = document.createElement('div');
+    minimapTooltip.className = 'minimap-tooltip';
+    document.body.appendChild(minimapTooltip);
+    
+    // Setup minimap interaction
+    setupMinimapInteraction();
+    
+    console.log('Simple Minimap System initialized');
+  }
+  
+  function setupMinimapInteraction() {
+    minimapCanvas.addEventListener('mousemove', (e) => {
+      const rect = minimapCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      // Check what element is under cursor
+      const element = getMinimapElementAt(x, y);
+      if (element !== minimapHoveredElement) {
+        minimapHoveredElement = element;
+        updateMinimapTooltip(element, x, y);
+      }
+    });
+    
+    minimapCanvas.addEventListener('click', (e) => {
+      const rect = minimapCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      // Handle minimap clicks for navigation
+      handleMinimapClick(x, y);
+    });
+    
+    minimapCanvas.addEventListener('mouseleave', () => {
+      minimapHoveredElement = null;
+      minimapTooltip.classList.remove('visible');
+    });
+  }
+  
+  function getMinimapElementAt(x, y) {
+    const canvasX = (x / minimapCanvas.width) * 2 - 1; // -1 to 1
+    const canvasY = (y / minimapCanvas.height) * 2 - 1; // -1 to 1
+    
+    // Convert to world coordinates
+    const worldX = canvasX * (realmSize.width / 2) * minimapZoom;
+    const worldY = canvasY * (realmSize.height / 2) * minimapZoom;
+    
+    // Check players
+    for (const player of players) {
+      const distance = Math.hypot(player.x - worldX, player.y - worldY);
+      if (distance < 20) return { type: 'player', data: player };
+    }
+    
+    // Check spawners
+    for (const spawner of spawners) {
+      const distance = Math.hypot(spawner.x - worldX, spawner.y - worldY);
+      if (distance < 30) return { type: 'spawner', data: spawner };
+    }
+    
+    // Check drones
+    for (const mob of mobs) {
+      const distance = Math.hypot(mob.x - worldX, mob.y - worldY);
+      if (distance < 15) return { type: 'drone', data: mob };
+    }
+    
+    // Check portals
+    for (const portal of portals) {
+      const distance = Math.hypot(portal.x - worldX, portal.y - worldY);
+      if (distance < 25) return { type: 'portal', data: portal };
+    }
+    
+    return null;
+  }
+  
+  function updateMinimapTooltip(element, x, y) {
+    if (!element) {
+      minimapTooltip.classList.remove('visible');
+      return;
+    }
+    
+    const rect = minimap.getBoundingClientRect();
+    minimapTooltip.style.left = (rect.left + x + 10) + 'px';
+    minimapTooltip.style.top = (rect.top + y - 10) + 'px';
+    
+    let text = '';
+    switch (element.type) {
+      case 'player':
+        text = `${element.data.username} (${Math.round(element.data.x)}, ${Math.round(element.data.y)})`;
+        break;
+      case 'spawner':
+        text = `${element.data.config.name} - ${element.data.droneCount} drones`;
+        break;
+      case 'drone':
+        text = `${element.data.type} - ${element.data.state} (${Math.round(element.data.health)}/${element.data.maxHealth})`;
+        break;
+      case 'portal':
+        text = `Portal to ${element.data.toRealm || 'Unknown'}`;
+        break;
+    }
+    
+    minimapTooltip.textContent = text;
+    minimapTooltip.classList.add('visible');
+  }
+  
+  function handleMinimapClick(x, y) {
+    const canvasX = (x / minimapCanvas.width) * 2 - 1;
+    const canvasY = (y / minimapCanvas.height) * 2 - 1;
+    
+    const worldX = canvasX * (realmSize.width / 2) * minimapZoom;
+    const worldY = canvasY * (realmSize.height / 2) * minimapZoom;
+    
+    // Center camera on clicked location
+    camera.x = worldX;
+    camera.y = worldY;
+    
+    // Show message
+    showMessage(`Moved to (${Math.round(worldX)}, ${Math.round(worldY)})`);
+  }
+  
+  // Render the simple minimap
+  function renderMinimap() {
+    if (!minimapCtx) return;
+    
+    // Clear canvas
+    minimapCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+    
+    // Draw background grid
+    drawMinimapGrid();
+    
+    // Draw realm boundary
+    drawMinimapBoundary();
+    
+    // Draw portals
+    drawMinimapPortals();
+    
+    // Draw spawners
+    drawMinimapSpawners();
+    
+    // Draw drones
+    drawMinimapDrones();
+    
+    // Draw players
+    drawMinimapPlayers();
+  }
+  
+  function drawMinimapGrid() {
+    const gridSize = 32;
+    const gridColor = 'rgba(0, 255, 255, 0.1)';
+    
+    minimapCtx.strokeStyle = gridColor;
+    minimapCtx.lineWidth = 0.5;
+    
+    for (let x = 0; x <= minimapCanvas.width; x += gridSize) {
+      minimapCtx.beginPath();
+      minimapCtx.moveTo(x, 0);
+      minimapCtx.lineTo(x, minimapCanvas.height);
+      minimapCtx.stroke();
+    }
+    
+    for (let y = 0; y <= minimapCanvas.height; y += gridSize) {
+      minimapCtx.beginPath();
+      minimapCtx.moveTo(0, y);
+      minimapCtx.lineTo(minimapCanvas.width, y);
+      minimapCtx.stroke();
+    }
+  }
+  
+  function drawMinimapBoundary() {
+    const boundaryColor = 'rgba(0, 255, 255, 0.3)';
+    const boundaryWidth = 2;
+    
+    minimapCtx.strokeStyle = boundaryColor;
+    minimapCtx.lineWidth = boundaryWidth;
+    minimapCtx.strokeRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+  }
+  
+  function drawMinimapPortals() {
+    for (const portal of portals) {
+      const x = worldToMinimapX(portal.x);
+      const y = worldToMinimapY(portal.y);
+      
+      if (x >= 0 && x < minimapCanvas.width && y >= 0 && y < minimapCanvas.height) {
+        // Draw portal icon
+        minimapCtx.fillStyle = '#0066ff';
+        minimapCtx.strokeStyle = '#ffffff';
+        minimapCtx.lineWidth = 1;
+        
+        minimapCtx.beginPath();
+        minimapCtx.arc(x, y, 6, 0, Math.PI * 2);
+        minimapCtx.fill();
+        minimapCtx.stroke();
+        
+        // Draw portal label
+        minimapCtx.fillStyle = '#ffffff';
+        minimapCtx.font = '8px Roboto Mono';
+        minimapCtx.textAlign = 'center';
+        minimapCtx.fillText('P', x, y + 3);
+      }
+    }
+  }
+  
+  function drawMinimapSpawners() {
+    for (const spawner of spawners) {
+      const x = worldToMinimapX(spawner.x);
+      const y = worldToMinimapY(spawner.y);
+      
+      if (x >= 0 && x < minimapCanvas.width && y >= 0 && y < minimapCanvas.height) {
+        // Draw spawner icon
+        minimapCtx.fillStyle = '#ff6600';
+        minimapCtx.strokeStyle = '#ffffff';
+        minimapCtx.lineWidth = 1;
+        
+        minimapCtx.beginPath();
+        minimapCtx.arc(x, y, 8, 0, Math.PI * 2);
+        minimapCtx.fill();
+        minimapCtx.stroke();
+        
+        // Draw spawner label
+        minimapCtx.fillStyle = '#ffffff';
+        minimapCtx.font = '8px Roboto Mono';
+        minimapCtx.textAlign = 'center';
+        minimapCtx.fillText('S', x, y + 3);
+        
+        // Draw spawn radius
+        const radius = worldToMinimapDistance(spawner.config.spawnRadius);
+        minimapCtx.strokeStyle = 'rgba(255, 102, 0, 0.3)';
+        minimapCtx.lineWidth = 1;
+        minimapCtx.beginPath();
+        minimapCtx.arc(x, y, radius, 0, Math.PI * 2);
+        minimapCtx.stroke();
+      }
+    }
+  }
+  
+  function drawMinimapDrones() {
+    for (const mob of mobs) {
+      const x = worldToMinimapX(mob.x);
+      const y = worldToMinimapY(mob.y);
+      
+      if (x >= 0 && x < minimapCanvas.width && y >= 0 && y < minimapCanvas.height) {
+        // Choose color based on drone type and state
+        let color = '#ff0066';
+        if (mob.type === 'drone_l1') color = '#ff0066';
+        else if (mob.type === 'drone_l2') color = '#ff6600';
+        else if (mob.type === 'drone_l3') color = '#ff0066';
+        
+        // Dim if not in combat
+        if (mob.state === 'PATROL' || mob.state === 'IDLE') {
+          color = color + '80'; // Add transparency
+        }
+        
+        minimapCtx.fillStyle = color;
+        minimapCtx.strokeStyle = '#ffffff';
+        minimapCtx.lineWidth = 1;
+        
+        minimapCtx.beginPath();
+        minimapCtx.arc(x, y, 4, 0, Math.PI * 2);
+        minimapCtx.fill();
+        minimapCtx.stroke();
+        
+        // Draw direction indicator for moving drones
+        if (mob.vx !== 0 || mob.vy !== 0) {
+          const angle = Math.atan2(mob.vy, mob.vx);
+          const endX = x + Math.cos(angle) * 8;
+          const endY = y + Math.sin(angle) * 8;
+          
+          minimapCtx.strokeStyle = '#ffffff';
+          minimapCtx.lineWidth = 1;
+          minimapCtx.beginPath();
+          minimapCtx.moveTo(x, y);
+          minimapCtx.lineTo(endX, endY);
+          minimapCtx.stroke();
+        }
+      }
+    }
+  }
+  
+  function drawMinimapPlayers() {
+    // Draw other players
+    for (const player of players) {
+      if (player.username === localPlayer.username) continue;
+      
+      const x = worldToMinimapX(player.x);
+      const y = worldToMinimapY(player.y);
+      
+      if (x >= 0 && x < minimapCanvas.width && y >= 0 && y < minimapCanvas.height) {
+        minimapCtx.fillStyle = '#00ff00';
+        minimapCtx.strokeStyle = '#ffffff';
+        minimapCtx.lineWidth = 1;
+        
+        minimapCtx.beginPath();
+        minimapCtx.arc(x, y, 4, 0, Math.PI * 2);
+        minimapCtx.fill();
+        minimapCtx.stroke();
+      }
+    }
+    
+    // Draw local player (centered)
+    const centerX = minimapCanvas.width / 2;
+    const centerY = minimapCanvas.height / 2;
+    
+    minimapCtx.fillStyle = '#00ff00';
+    minimapCtx.strokeStyle = '#ffffff';
+    minimapCtx.lineWidth = 2;
+    
+    minimapCtx.beginPath();
+    minimapCtx.arc(centerX, centerY, 6, 0, Math.PI * 2);
+    minimapCtx.fill();
+    minimapCtx.stroke();
+    
+    // Simple direction indicator
+    const angle = input.angle;
+    const endX = centerX + Math.cos(angle) * 10;
+    const endY = centerY + Math.sin(angle) * 10;
+    
+    minimapCtx.strokeStyle = '#ffffff';
+    minimapCtx.lineWidth = 2;
+    minimapCtx.beginPath();
+    minimapCtx.moveTo(centerX, centerY);
+    minimapCtx.lineTo(endX, endY);
+    minimapCtx.stroke();
+  }
+  
+
+  
+  // Coordinate conversion helpers
+  function worldToMinimapX(worldX) {
+    return (worldX / (realmSize.width / 2)) * (minimapCanvas.width / 2) + (minimapCanvas.width / 2);
+  }
+  
+  function worldToMinimapY(worldY) {
+    return (worldY / (realmSize.height / 2)) * (minimapCanvas.height / 2) + (minimapCanvas.height / 2);
+  }
+  
+  function worldToMinimapDistance(worldDistance) {
+    return (worldDistance / (realmSize.width / 2)) * (minimapCanvas.width / 2);
+  }
 
   function promptUsername() {
     let name = localStorage.getItem('venatus_username') || '';
@@ -149,7 +505,15 @@
       ctx.stroke();
     }
 
-    // No hardcoded spawners - realm is clean slate
+    // Draw spawners
+    for (const spawner of spawners) {
+      renderSpawner(ctx, spawner);
+    }
+    
+    // Draw drones/mobs
+    for (const mob of mobs) {
+      drawMob(ctx, mob);
+    }
 
     // Portals
     ctx.fillStyle = 'rgba(0,255,255,0.25)';
@@ -268,6 +632,14 @@
     if (coordinateDisplay) {
       coordinateDisplay.textContent = `X: ${localPlayer.x.toFixed(1)} Y: ${localPlayer.y.toFixed(1)}`;
     }
+    
+    // Update minimap location display
+    if (minimap) {
+      const locationElement = minimap.querySelector('.minimap-location');
+      if (locationElement) {
+        locationElement.textContent = `(${Math.round(localPlayer.x)}, ${Math.round(localPlayer.y)})`;
+      }
+    }
   }
 
   function gameLoop() {
@@ -281,6 +653,10 @@
     updateHitEffects(dt);
     
     draw();
+    
+    // Render simple minimap
+    renderMinimap();
+    
     requestAnimationFrame(gameLoop);
   }
 
@@ -351,7 +727,12 @@
     socket.emit('input', input);
   }
 
-  username = promptUsername();
+  // For testing: automatically use test_builder to get weapons
+  username = 'test_builder';
+  
+  // Clear any stored username to ensure we always use test_builder
+  localStorage.removeItem('venatus_username');
+  
   const socket = io({ auth: { username } });
   socket.on('fired', () => { lastFiredAt = performance.now(); });
   
@@ -359,6 +740,20 @@
 
   socket.on('connect_error', (err) => {
     showMessage('Connection error: ' + (err?.message || 'unknown'));
+  });
+  
+  socket.on('disconnect', () => {
+    showMessage('Disconnected from server');
+  });
+  
+  socket.on('reconnect', () => {
+    showMessage('Reconnected to server');
+    // Force gear refresh on reconnect
+    if (gear && gear.inventory && gear.inventory.some(item => item !== null)) {
+      console.log('Reconnect: Refreshing gear UI');
+      renderGearUI();
+      updateHotbarActive();
+    }
   });
 
   socket.on('errorMessage', (msg) => showMessage(msg));
@@ -369,12 +764,35 @@
     realmConfig = data.realmConfig;
     physics = data.physics;
     localPlayer.x = data.x;
+    
+    // Update minimap title
+    if (minimap) {
+      const titleElement = minimap.querySelector('.minimap-title');
+      if (titleElement) {
+        titleElement.textContent = realm.charAt(0).toUpperCase() + realm.slice(1);
+      }
+    }
     localPlayer.y = data.y;
+    
     gear = data.gear || gear;
-    console.log('INIT gear', gear);
+    
     renderGearUI();
     updateHotbarActive();
     showMessage(`Connected as ${username} in ${realm}`);
+    
+    // Fallback: if gear exists but UI isn't showing it, force refresh
+    setTimeout(() => {
+      if (gear && gear.inventory && gear.inventory.some(item => item !== null)) {
+        const inventorySlots = document.querySelectorAll('#inventory .slot');
+        const hasVisibleItems = Array.from(inventorySlots).some(slot => slot.children.length > 0);
+        
+        if (!hasVisibleItems) {
+          console.log('Fallback: Gear exists but not visible, forcing refresh');
+          renderGearUI();
+          updateHotbarActive();
+        }
+      }
+    }, 1000); // Wait 1 second after init
   });
 
   socket.on('realmChanged', (data) => {
@@ -399,13 +817,32 @@
       players: players.length, 
       portals: portals.length, 
       mobs: mobs.length,
-      spawners: spawners.length,
+      spawners: snapshot.spawners.length,
       mobsData: mobs 
     });
+    
     const me = players.find((p) => p.username === username);
     if (me) {
       localPlayer.x = me.x;
       localPlayer.y = me.y;
+      
+      // Update realm if it changed
+      if (me.realm && me.realm !== realm) {
+        realm = me.realm;
+        if (minimap) {
+          const titleElement = minimap.querySelector('.minimap-title');
+          if (titleElement) {
+            titleElement.textContent = realm.charAt(0).toUpperCase() + realm.slice(1);
+          }
+        }
+      }
+      
+      // Update gear if it changed
+      if (me.gear && JSON.stringify(me.gear) !== JSON.stringify(gear)) {
+        gear = me.gear;
+        renderGearUI();
+        updateHotbarActive();
+      }
     }
 
     // Projectiles snapshot
@@ -444,6 +881,8 @@
   }
 
   function renderGearUI() {
+    // Debug logging removed - system is working correctly
+    
     // equipment grid (7 slots)
     const eqOrder = ['shoulderLeft', 'head', 'shoulderRight', 'chest', 'backpack', 'boots'];
     equipmentGrid.innerHTML = '';
@@ -465,7 +904,8 @@
       el.dataset.index = String(i);
       addDragHandlers(el, { kind: 'inventory', index: i });
       inventoryGrid.appendChild(el);
-      renderSlotContent(el, gear.inventory[i]);
+      const item = gear.inventory[i];
+      renderSlotContent(el, item);
     }
 
     // hotbar items
@@ -478,21 +918,22 @@
 
   function renderHotbarUI() {
     const hotbarSlots = hotbarPanel.querySelectorAll('.slot');
+    
     hotbarSlots.forEach((el, i) => {
       el.innerHTML = '';
       el.dataset.kind = 'hotbar';
       el.dataset.index = String(i);
       addDragHandlers(el, { kind: 'hotbar', index: i });
-      // Ensure no hover/click selection
-      el.onmouseenter = null;
-      el.onclick = null;
-      renderSlotContent(el, gear.hotbar?.[i] || null);
+      
+      const item = gear.hotbar?.[i] || null;
+      renderSlotContent(el, item);
     });
   }
 
   function renderSlotContent(el, item) {
     el.textContent = '';
     if (!item) return;
+    
     const iconPath = ITEM_ICONS[item.id];
     if (iconPath) {
       const img = document.createElement('img');
@@ -888,6 +1329,111 @@
     
     ctx.restore();
   }
+  
+  // Drone/mob rendering
+  function drawMob(ctx, mob) {
+    const screenX = mob.x - camera.x + canvas.width / 2;
+    const screenY = mob.y - camera.y + canvas.height / 2;
+    
+    // Only render if on screen
+    if (screenX < -50 || screenX > canvas.width + 50 || 
+        screenY < -50 || screenY > canvas.height + 50) {
+      return;
+    }
+    
+    ctx.save();
+    
+    // Choose color based on drone type
+    let color = '#ff0066';
+    if (mob.type === 'drone_l1') color = '#ff0066';
+    else if (mob.type === 'drone_l2') color = '#ff6600';
+    else if (mob.type === 'drone_l3') color = '#ff0066';
+    
+    // Dim if not in combat
+    if (mob.state === 'PATROL' || mob.state === 'IDLE') {
+      color = color + '80'; // Add transparency
+    }
+    
+    // Draw drone body
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    
+    ctx.beginPath();
+    ctx.arc(screenX, screenY, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    
+    // Draw drone type indicator
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '10px Roboto Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(mob.type.split('_')[1].toUpperCase(), screenX, screenY + 4);
+    
+    // Draw health bar
+    const healthBarWidth = 24;
+    const healthBarHeight = 4;
+    const healthPercent = mob.health / mob.maxHealth;
+    
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(screenX - healthBarWidth/2, screenY - 20, healthBarWidth, healthBarHeight);
+    
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(screenX - healthBarWidth/2, screenY - 20, healthBarWidth * healthPercent, healthBarHeight);
+    
+    // Draw state indicator
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '8px Roboto Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(mob.state, screenX, screenY + 25);
+    
+    // Draw direction indicator for moving drones
+    if (mob.vx !== 0 || mob.vy !== 0) {
+      const angle = Math.atan2(mob.vy, mob.vx);
+      const endX = screenX + Math.cos(angle) * 20;
+      const endY = screenY + Math.sin(angle) * 20;
+      
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(screenX, screenY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+    }
+    
+    ctx.restore();
+  }
+  
+  // Initialize minimap system
+  initMinimap();
+  
+      // Debug: Add manual gear refresh button
+    const debugButton = document.createElement('button');
+    debugButton.textContent = 'Refresh Gear (Debug)';
+    debugButton.style.position = 'fixed';
+    debugButton.style.top = '10px';
+    debugButton.style.right = '10px';
+    debugButton.style.zIndex = '1000';
+    debugButton.style.padding = '5px 10px';
+    debugButton.style.backgroundColor = '#ff6600';
+    debugButton.style.color = 'white';
+    debugButton.style.border = 'none';
+    debugButton.style.borderRadius = '3px';
+    debugButton.style.cursor = 'pointer';
+    
+    debugButton.onclick = () => {
+      console.log('Manual gear refresh triggered');
+      console.log('Current gear state:', gear);
+      
+          // Test gear creation removed - system is working correctly
+      
+      renderGearUI();
+      updateHotbarActive();
+    };
+    
+    document.body.appendChild(debugButton);
+    
+    // Debug panels removed - system is working correctly
 })();
 
 

@@ -21,7 +21,7 @@ const {
   moveGear,
   projectiles,
   getProjectileSpeedForItem,
-  getEnergyCostForItem,
+  getHeatPerShot,
   getItemProps,
   spawnInitialMobs,
   getDamageForItem,
@@ -167,15 +167,56 @@ io.on('connection', async (socket) => {
       return;
     }
 
-    let userRecord = await getUser(username);
-    if (!userRecord) {
-      userRecord = createDefaultUser(username);
+    // Check if player already exists in memory (might have gear from debug commands)
+    let existingPlayer = getPlayer(username);
+    let player;
+    
+    console.log(`Client ${username} connecting, existing player found:`, !!existingPlayer);
+    if (existingPlayer) {
+      console.log(`Existing player ${username} gear:`, existingPlayer.gear);
+      // Use existing player data, just update socket ID
+      existingPlayer.socketId = socket.id;
+      player = existingPlayer;
+    } else {
+      // For test_builder, always create with weapons
+      if (username === 'test_builder') {
+        console.log(`Creating test_builder with weapons`);
+        player = addPlayerFromRecord(username, {
+          username: 'test_builder',
+          x: 0,
+          y: 0,
+          current_realm: 'nexus',
+          socketId: socket.id,
+          gear: {
+            inventory: [{ id: 'item_pistol_a' }, { id: 'item_rifle_a' }, null, null],
+            hotbar: [{ id: 'item_rifle_a' }, { id: 'item_pistol_a' }, null, null],
+            equipment: { head: null, chest: null, boots: null, shoulderLeft: null, shoulderRight: null, backpack: null }
+          }
+        });
+      } else {
+        // Load from database or create new for other users
+        console.log(`Creating new player for ${username}`);
+        let userRecord = await getUser(username);
+        if (!userRecord) {
+          userRecord = createDefaultUser(username);
+        }
+        player = addPlayerFromRecord(username, { ...userRecord, socketId: socket.id });
+      }
+      console.log(`Player ${username} gear:`, player.gear);
     }
-
-    const player = addPlayerFromRecord(userRecord, socket.id);
     socket.join(player.realm);
 
-          socket.emit('init', {
+          console.log(`Sending init to ${player.username}:`, {
+        username: player.username,
+        realm: player.realm,
+        x: player.x,
+        y: player.y,
+        gear: player.gear,
+        gearInventory: player.gear?.inventory,
+        gearHotbar: player.gear?.hotbar
+      });
+      
+      socket.emit('init', {
         username: player.username,
         realm: player.realm,
         x: player.x,
@@ -235,14 +276,14 @@ io.on('connection', async (socket) => {
         try { socket.emit('fired', { angle: p.input.angle, ts: Date.now() }); } catch (_) {}
       }
     }
-    // Energy display loop per connection
+    // Heat display loop per connection
     setInterval(() => {
       const p = getPlayer(player.username);
       if (!p) return;
       
-      // Send current energy status to client
-      const energyPercent = p.energy / p.maxEnergy;
-      const payload = { value: energyPercent, overheated: p.energy <= 0 };
+      // Send current heat status to client
+      const heatPercent = p.heat / p.maxHeat;
+      const payload = { value: heatPercent, overheated: p.heat >= p.maxHeat };
       socket.emit('heat', payload);
     }, 100);
 
@@ -257,8 +298,8 @@ io.on('connection', async (socket) => {
       const p = getPlayer(player.username);
       if (!p) return;
       
-      // Check if player has enough energy
-      if (p.energy <= 0) return;
+      // Check if player's weapon is overheated
+      if (p.heat >= p.maxHeat) return;
       
       const activeItem = p.gear?.hotbar?.[p.activeHotbarIndex || 0] || null;
       if (!activeItem?.id) return;
@@ -266,13 +307,13 @@ io.on('connection', async (socket) => {
       const props = getItemProps(activeItem.id) || {};
       const shots = Number.isFinite(props.burstShots) ? Math.max(1, Math.floor(props.burstShots)) : 1;
 
-      // Automatic weapon handling: start interval until mouseup or no energy
+      // Automatic weapon handling: start interval until mouseup or overheated
       if (props.auto) {
         if (autoInterval) return; // already firing
         const intervalMs = Math.max(50, Math.floor(1000 / (props.rof || 10)));
         autoInterval = setInterval(() => {
           const latest = getPlayer(player.username);
-          if (!latest || latest.energy <= 0) { stopAuto(); return; }
+          if (!latest || latest.heat >= latest.maxHeat) { stopAuto(); return; }
           spawnShot(latest);
         }, intervalMs);
         return;
@@ -282,11 +323,11 @@ io.on('connection', async (socket) => {
       let fired = 0;
       const fireOnce = () => {
         const latest = getPlayer(player.username);
-        if (!latest || latest.energy <= 0) return;
+        if (!latest || latest.heat >= latest.maxHeat) return;
         spawnShot(latest);
         fired += 1;
         
-        if (fired < shots && latest.energy > 0) {
+        if (fired < shots && latest.heat < latest.maxHeat) {
           setTimeout(fireOnce, 90);
         }
       };
@@ -370,6 +411,9 @@ setInterval(async () => {
 // Spawn initial mobs for testing
 spawnInitialMobs();
 console.log('Initial mobs spawned');
+
+// Test user will be created when client connects as 'test_builder'
+console.log('Server ready - test_builder will get weapons on connection');
 
 server.listen(PORT, () => {
   // eslint-disable-next-line no-console
